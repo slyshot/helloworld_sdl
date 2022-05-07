@@ -66,6 +66,7 @@ typedef struct {
 
 	VkSwapchainCreateInfoKHR *swapchain_info;
 	VkSwapchainKHR swapchain;
+	uint32_t swapchain_imagecount;
 	VkImage *swapchain_images;
 
 	VkImageViewCreateInfo *imageview_infos;
@@ -434,10 +435,9 @@ void vulkan_init(void) {
 		}
 		vkCreateSwapchainKHR(vkstate.log_dev, vkstate.swapchain_info,NULL, &vkstate.swapchain);
 		{ //get swapchain images
-			uint32_t imagecount;
-			vkGetSwapchainImagesKHR(vkstate.log_dev, vkstate.swapchain, &imagecount, NULL);
-			vkstate.swapchain_images = malloc(sizeof(VkImage)*imagecount);
-			vkGetSwapchainImagesKHR(vkstate.log_dev, vkstate.swapchain, &imagecount, vkstate.swapchain_images);
+			vkGetSwapchainImagesKHR(vkstate.log_dev, vkstate.swapchain, &vkstate.swapchain_imagecount, NULL);
+			vkstate.swapchain_images = malloc(sizeof(VkImage)*vkstate.swapchain_imagecount);
+			vkGetSwapchainImagesKHR(vkstate.log_dev, vkstate.swapchain, &vkstate.swapchain_imagecount, vkstate.swapchain_images);
 		}
 	}
 	{ //create a render pass
@@ -490,7 +490,7 @@ void vulkan_init(void) {
 	{ //create image views
 		vkstate.imageview_infos = calloc(sizeof(VkImageViewCreateInfo)*2,1);
 		vkstate.imageviews = malloc(sizeof(VkImageView)*2);
-		for (int i = 0; i < 2; i++) {
+		for (uint32_t i = 0; i < vkstate.swapchain_imagecount; i++) {
 			vkstate.imageview_infos[i].sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 			vkstate.imageview_infos[i].image = vkstate.swapchain_images[i];
 			vkstate.imageview_infos[i].viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -513,7 +513,7 @@ void vulkan_init(void) {
 	{ //create frame buffers
 		vkstate.framebuffer_infos = calloc(sizeof(VkFramebufferCreateInfo)*2,1);
 		vkstate.framebuffers = malloc(sizeof(VkFramebuffer)*2);
-		for (int i = 0; i < 2; i++) {
+		for (uint32_t i = 0; i < vkstate.swapchain_imagecount; i++) {
 			vkstate.framebuffer_infos[i].sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 			vkstate.framebuffer_infos[i].renderPass = *vkstate.render_pass;
 			vkstate.framebuffer_infos[i].attachmentCount = 1;
@@ -533,13 +533,15 @@ void vulkan_init(void) {
 		}
 		vkCreateCommandPool(vkstate.log_dev, vkstate.command_pool_create_info, NULL, &vkstate.command_pool);
 	}
-	{ //allocate a command buffer
+	//allocating one for each swapchain image, that way 
+	//you can present them based on an image index without having to reset and re-record the command buffer every time
+	{ //allocate command buffers
 		{ //infos
-			vkstate.cmd_allocate_info = calloc(sizeof(VkCommandBufferAllocateInfo),1);
+			vkstate.cmd_allocate_info = calloc(sizeof(VkCommandBufferAllocateInfo),vkstate.swapchain_imagecount);
 			vkstate.cmd_allocate_info->sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 			vkstate.cmd_allocate_info->commandPool = vkstate.command_pool;
 			vkstate.cmd_allocate_info->level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-			vkstate.cmd_allocate_info->commandBufferCount = 1;
+			vkstate.cmd_allocate_info->commandBufferCount = vkstate.swapchain_imagecount;
 		}
 		vkstate.cmd_buffers = malloc(sizeof(VkCommandBuffer)*vkstate.cmd_allocate_info->commandBufferCount);
 		vkAllocateCommandBuffers(vkstate.log_dev, vkstate.cmd_allocate_info, vkstate.cmd_buffers);
@@ -709,40 +711,43 @@ void vulkan_init(void) {
 		vkstate.fences = malloc(sizeof(VkFence));
 		vkCreateFence(vkstate.log_dev, vkstate.fence_create_info, NULL, vkstate.fences);
 	}
+	{ //write to command buffer
+		//writing 2, one for each swapchain image.
+		for (uint32_t buffer_index = 0; buffer_index < vkstate.cmd_allocate_info->commandBufferCount; buffer_index++) {
+			{ //command begin info
+				vkstate.cmd_begin_info = calloc(sizeof(VkCommandBufferBeginInfo),1);
+				vkstate.cmd_begin_info->sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+			}
+			// vkResetCommandBuffer(vkstate.cmd_buffers[0], 0);
+
+			vkBeginCommandBuffer(vkstate.cmd_buffers[buffer_index], vkstate.cmd_begin_info);
+			{ //render pass begin info
+
+				vkstate.render_pass_begin_info = calloc(sizeof(VkRenderPassBeginInfo),1);
+				vkstate.render_pass_begin_info->sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+				vkstate.render_pass_begin_info->renderPass = *vkstate.render_pass;
+				vkstate.render_pass_begin_info->framebuffer = vkstate.framebuffers[buffer_index];
+				vkstate.render_pass_begin_info->renderArea.extent = vkstate.swapchain_info->imageExtent;
+				vkstate.render_pass_begin_info->renderArea.offset = (VkOffset2D){0,0};
+				VkClearValue *clear_color = malloc(sizeof(VkClearValue));
+				*clear_color = (VkClearValue){.color={{0.0f,0.0f,0.0f,1.0f}}};
+				vkstate.render_pass_begin_info->clearValueCount = 1;
+				vkstate.render_pass_begin_info->pClearValues = clear_color;
+			}
+			vkCmdBeginRenderPass(vkstate.cmd_buffers[buffer_index],vkstate.render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+			vkCmdBindPipeline(vkstate.cmd_buffers[buffer_index], VK_PIPELINE_BIND_POINT_GRAPHICS, vkstate.graphics_pipeline);
+			vkCmdDraw(vkstate.cmd_buffers[buffer_index], 3, 1, 0, 0);
+			vkCmdEndRenderPass(vkstate.cmd_buffers[buffer_index]);
+			vkEndCommandBuffer(vkstate.cmd_buffers[buffer_index]);
+		}
+	}
 
 }
 void vulkan_update(int dt) {
 	vkWaitForFences(vkstate.log_dev, 1, &vkstate.fences[0], VK_TRUE, UINT64_MAX);
 	vkResetFences(vkstate.log_dev,1,&vkstate.fences[0]);
-	uint32_t imageIndex;
-	vkAcquireNextImageKHR(vkstate.log_dev, vkstate.swapchain, UINT64_MAX, vkstate.semaphores[0], VK_NULL_HANDLE, &imageIndex);
-	{ //write to command buffer
-		{ //command begin info
-			vkstate.cmd_begin_info = calloc(sizeof(VkCommandBufferBeginInfo),1);
-			vkstate.cmd_begin_info->sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		}
-		vkResetCommandBuffer(vkstate.cmd_buffers[0], 0);
-
-		vkBeginCommandBuffer(vkstate.cmd_buffers[0], vkstate.cmd_begin_info);
-		{ //render pass begin info
-
-			vkstate.render_pass_begin_info = calloc(sizeof(VkRenderPassBeginInfo),1);
-			vkstate.render_pass_begin_info->sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-			vkstate.render_pass_begin_info->renderPass = *vkstate.render_pass;
-			vkstate.render_pass_begin_info->framebuffer = vkstate.framebuffers[imageIndex];
-			vkstate.render_pass_begin_info->renderArea.extent = vkstate.swapchain_info->imageExtent;
-			vkstate.render_pass_begin_info->renderArea.offset = (VkOffset2D){0,0};
-			VkClearValue *clear_color = malloc(sizeof(VkClearValue));
-			*clear_color = (VkClearValue){.color={{0.0f,0.0f,0.0f,1.0f}}};
-			vkstate.render_pass_begin_info->clearValueCount = 1;
-			vkstate.render_pass_begin_info->pClearValues = clear_color;
-		}
-		vkCmdBeginRenderPass(vkstate.cmd_buffers[0],vkstate.render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-		vkCmdBindPipeline(vkstate.cmd_buffers[0], VK_PIPELINE_BIND_POINT_GRAPHICS, vkstate.graphics_pipeline);
-		vkCmdDraw(vkstate.cmd_buffers[0], 3, 1, 0, 0);
-		vkCmdEndRenderPass(vkstate.cmd_buffers[0]);
-		vkEndCommandBuffer(vkstate.cmd_buffers[0]);
-	}
+	uint32_t image_index;
+	vkAcquireNextImageKHR(vkstate.log_dev, vkstate.swapchain, UINT64_MAX, vkstate.semaphores[0], VK_NULL_HANDLE, &image_index);
 	// VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
 	uint32_t flag = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	vkQueueSubmit(*vkstate.device_queue, 1, &(VkSubmitInfo) {
@@ -752,7 +757,7 @@ void vulkan_update(int dt) {
 		.pWaitSemaphores = &vkstate.semaphores[0],
 		.pWaitDstStageMask = &flag,
 		.commandBufferCount = 1,
-		.pCommandBuffers = vkstate.cmd_buffers,
+		.pCommandBuffers = &vkstate.cmd_buffers[image_index],
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &vkstate.semaphores[1],
 	}, vkstate.fences[0]);
@@ -762,6 +767,6 @@ void vulkan_update(int dt) {
 	presentInfo.pWaitSemaphores = &vkstate.semaphores[1];
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &vkstate.swapchain;
-	presentInfo.pImageIndices = &imageIndex;
+	presentInfo.pImageIndices = &image_index;
 	vkQueuePresentKHR(*vkstate.device_queue, &presentInfo);
 }
