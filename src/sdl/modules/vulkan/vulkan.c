@@ -38,7 +38,6 @@ TODO:
 		Set up dynamic state, and descriptors
 	6.
 		Change makefile to compile shaders with glslc if they are found.
-
 	7.
 		Do something about the compile-time shaders paths
 	8.
@@ -65,7 +64,7 @@ typedef struct {
 	VkRenderPass *render_pass;
 
 	VkSwapchainCreateInfoKHR *swapchain_info;
-	VkSwapchainKHR swapchain;
+	VkSwapchainKHR *swapchain;
 	uint32_t swapchain_imagecount;
 	VkImage *swapchain_images;
 
@@ -159,14 +158,9 @@ void vulkan_init(void) {
 			instance_info->sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 			{  // Getting and verifying the instance extensions
 				
-				//TODO: Figure out what to do about these
-				//compile time variables to configure:
-				char *req_exts[] = {"VK_KHR_surface"};
-				//why would you enable all extensions?!
-				//TODO: remove "enable_all_extensions", probably remove 'rquested_extensions' entirely, and clean everything here up.
-				// also will probably need to make req_exts a char ** in order to still append it with the SDL extensions, although that shouldn't cause any problems.
-				int enable_all_extensions = 0;
-				//The rest is calcualation.
+				char **req_exts = malloc(sizeof(char*)*1);
+				req_exts[0] = "VK_KHR_surface";
+				uint32_t enabled_extension_count = 1;
 
 				uint32_t property_count;
 				VkResult result = vkEnumerateInstanceExtensionProperties(NULL, &property_count, NULL);
@@ -179,44 +173,19 @@ void vulkan_init(void) {
 					LOG_ERROR("Error, can't enumerate extensions. Error num: %d\n",result);
 				}
 
-				uint32_t enabled_extension_count;
-				// two variables named "requested extensions", one of them shortened?
-				// can probably just 
-				char **requested_extensions;
 				{ //prepare requested_extensions and set enabled_extension_count
-					if (enable_all_extensions) {
-						requested_extensions = malloc(sizeof(char*)*property_count);
-						enabled_extension_count = property_count;
-						{ //fill the pointer with all extensions
-							for (uint32_t i = 0; i < enabled_extension_count; i++) {
-								requested_extensions[i] = malloc(strlen(props[i].extensionName));
-								memcpy(props[i].extensionName,requested_extensions[i], strlen(props[i].extensionName));
+					{ //detect missing extensions
+						int crash = 0;
+						for (unsigned i = 0; i < enabled_extension_count; i++) {
+							if(!has(props,property_count,req_exts[i])) {
+								crash = 1;
+								LOG_ERROR("Error: Missing extension %s\n",req_exts[i]);
 							}
 						}
-					} else {
-						//sizeof(req_exts) works becaues it's an array, not a char*
-						requested_extensions = malloc(sizeof(req_exts));
-						enabled_extension_count = sizeof(req_exts)/sizeof(char*);
-						//future: Why didn't I just use memcpy for this? Why does this even exist?
-						{ //fill the pointer with requested extensions
-							for (uint32_t i = 0; i < enabled_extension_count; i++) {
-								requested_extensions[i] = malloc(strlen(req_exts[i]) + 1);
-								memcpy(requested_extensions[i],req_exts[i],strlen(req_exts[i]) + 1);
-								// printf("Copied %s into str %s\n",req_exts[i])
-							}
+						if (crash) {
+							exit(-1);
 						}
-						{ //detect missing extensions
-							int crash = 0;
-							for (unsigned i = 0; i < enabled_extension_count; i++) {
-								if(!has(props,property_count,requested_extensions[i])) {
-									crash = 1;
-									LOG_ERROR("Error: Missing extension %s\n",requested_extensions[i]);
-								}
-							}
-							if (crash) {
-								exit(-1);
-							}
-						}
+						free(props);
 					}
 					{ //add SDL extensions
 						unsigned int pcount;
@@ -226,16 +195,17 @@ void vulkan_init(void) {
 						}
 						char **pnames = malloc(sizeof(char*)*pcount);
 						SDL_Vulkan_GetInstanceExtensions(window,&pcount,(const char **)pnames);
-						requested_extensions = realloc(requested_extensions,sizeof(char*)*(enabled_extension_count + pcount));
+						req_exts = realloc(req_exts,sizeof(char*)*(enabled_extension_count + pcount));
 						for (uint32_t i = enabled_extension_count; i < enabled_extension_count+pcount; i++) {
 							//add one for null character not counted as part of the string length
-							requested_extensions[i] = malloc(strlen(pnames[i-enabled_extension_count]) + 1);
-							memcpy(requested_extensions[i], pnames[i-enabled_extension_count], strlen(pnames[i-enabled_extension_count]) + 1);
+							req_exts[i] = malloc(strlen(pnames[i-enabled_extension_count]) + 1);
+							memcpy(req_exts[i], pnames[i-enabled_extension_count], strlen(pnames[i-enabled_extension_count]) + 1);
 						}
 						enabled_extension_count += pcount;
+						free(pnames);
 					}
 				}
-				instance_info->ppEnabledExtensionNames = (const char **)requested_extensions;
+				instance_info->ppEnabledExtensionNames = (const char **)req_exts;
 				instance_info->enabledExtensionCount = enabled_extension_count;
 
 
@@ -285,7 +255,7 @@ void vulkan_init(void) {
 				for (uint32_t j = 0; j < queuefamilycount; j++) {
 					vkGetPhysicalDeviceSurfaceSupportKHR(devices[i], j, vkstate.surface, &surface_supported);
 				}
-				if (surface_supported && VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+				if (surface_supported && props.deviceType & VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
 					found_device = 1;
 					vkstate.phys_dev = devices[i];
 					break;
@@ -314,13 +284,14 @@ void vulkan_init(void) {
 						props = malloc(sizeof(VkQueueFamilyProperties)*property_count);
 						vkGetPhysicalDeviceQueueFamilyProperties(vkstate.phys_dev, &property_count, props);
 						int found_one = 0;
-						for (uint32_t i = 0; i < property_count; i++) {
-							if (props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-								vkstate.queue_family_index = i;
+						for (uint32_t index = 0; index < property_count; index++) {
+							if (props[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+								vkstate.queue_family_index = index;
 								found_one = 1;
 								break;
 							}
 						}
+						free(props);
 						if (!found_one) {
 							LOG_ERROR("Error, no device queue with graphics capabilities found!\n");
 							exit(-1);
@@ -334,16 +305,14 @@ void vulkan_init(void) {
 					device_queue_create_info->queueCount = 1;
 					device_queue_create_info->pQueuePriorities = priority;
 				}
-				char **device_extensions;
+				// char **device_extensions;
 				uint32_t enabled_extension_count;
+				char **req_exts;
 				{ //get & verify device extensions
-					//TODO:
-					//	do something about these compile-time variables
-					//	make req_exts a char**
-					char *req_exts[] = {"VK_KHR_swapchain"};
-					//	remove enable_all_extensions
+					req_exts = malloc(sizeof(char*)*1);
+					req_exts[0] = "VK_KHR_swapchain";
+					enabled_extension_count = 1;
 					// 	check for a way to abstract this and the other one into one function
-					int enable_all_extensions = 0;
 
 					uint32_t property_count;
 					VkResult result = vkEnumerateDeviceExtensionProperties(vkstate.phys_dev, NULL, &property_count, NULL);
@@ -357,26 +326,16 @@ void vulkan_init(void) {
 						LOG_ERROR("Cannot enumerate physical device extension property\n");
 						exit(-1);
 					}
-					if (enable_all_extensions) {
-						enabled_extension_count = property_count;
-						device_extensions = malloc(sizeof(char*)*property_count);
-						for (uint32_t i = 0; i < property_count; i++) {
-							device_extensions[i] = malloc(strlen(properties[property_count].extensionName) + 1);
-							memcpy(device_extensions[i], properties[property_count].extensionName, strlen(properties[property_count].extensionName) + 1);
+					int crash = 0;
+					for (long unsigned i = 0; i < enabled_extension_count; i++) {
+						if (!has(properties,property_count,req_exts[i])) {
+							LOG_ERROR("Error: Missing extension %s\n",req_exts[i]);
+							crash = 1;
 						}
-					} else {
-						device_extensions = req_exts;
-						int crash = 0;
-						enabled_extension_count = sizeof(req_exts)/sizeof(char*);
-						for (long unsigned i = 0; i < sizeof(req_exts)/sizeof(char*); i++) {
-							if (!has(properties,property_count,req_exts[i])) {
-								LOG_ERROR("Error: Missing extension %s\n",req_exts[i]);
-								crash = 1;
-							}
-						}
-						if(crash) {
-							exit(-1);
-						}
+					}
+					free(properties);
+					if(crash) {
+						exit(-1);
 					}
 				}
 
@@ -385,7 +344,7 @@ void vulkan_init(void) {
 				device_create_info->sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 				device_create_info->queueCreateInfoCount = 1;
 				device_create_info->pQueueCreateInfos = device_queue_create_info;
-				device_create_info->ppEnabledExtensionNames = (const char**) device_extensions;
+				device_create_info->ppEnabledExtensionNames = (const char**) req_exts;
 				device_create_info->enabledExtensionCount = enabled_extension_count;
 				device_create_info->pEnabledFeatures = NULL;
 				vkstate.device_create_info = device_create_info;
@@ -433,11 +392,12 @@ void vulkan_init(void) {
 			vkstate.swapchain_info->imageFormat = formats[1].format;
 			vkstate.swapchain_info->imageColorSpace = formats[1].colorSpace;
 		}
-		vkCreateSwapchainKHR(vkstate.log_dev, vkstate.swapchain_info,NULL, &vkstate.swapchain);
+		vkstate.swapchain = malloc(sizeof(VkSwapchainKHR));
+		vkCreateSwapchainKHR(vkstate.log_dev, vkstate.swapchain_info,NULL, vkstate.swapchain);
 		{ //get swapchain images
-			vkGetSwapchainImagesKHR(vkstate.log_dev, vkstate.swapchain, &vkstate.swapchain_imagecount, NULL);
+			vkGetSwapchainImagesKHR(vkstate.log_dev, *vkstate.swapchain, &vkstate.swapchain_imagecount, NULL);
 			vkstate.swapchain_images = malloc(sizeof(VkImage)*vkstate.swapchain_imagecount);
-			vkGetSwapchainImagesKHR(vkstate.log_dev, vkstate.swapchain, &vkstate.swapchain_imagecount, vkstate.swapchain_images);
+			vkGetSwapchainImagesKHR(vkstate.log_dev, *vkstate.swapchain, &vkstate.swapchain_imagecount, vkstate.swapchain_images);
 		}
 	}
 	{ //create a render pass
@@ -747,7 +707,7 @@ void vulkan_update(int dt) {
 	vkWaitForFences(vkstate.log_dev, 1, &vkstate.fences[0], VK_TRUE, UINT64_MAX);
 	vkResetFences(vkstate.log_dev,1,&vkstate.fences[0]);
 	uint32_t image_index;
-	vkAcquireNextImageKHR(vkstate.log_dev, vkstate.swapchain, UINT64_MAX, vkstate.semaphores[0], VK_NULL_HANDLE, &image_index);
+	vkAcquireNextImageKHR(vkstate.log_dev, *vkstate.swapchain, UINT64_MAX, vkstate.semaphores[0], VK_NULL_HANDLE, &image_index);
 	// VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
 	uint32_t flag = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	vkQueueSubmit(*vkstate.device_queue, 1, &(VkSubmitInfo) {
@@ -766,7 +726,7 @@ void vulkan_update(int dt) {
 	presentInfo.waitSemaphoreCount = 1;
 	presentInfo.pWaitSemaphores = &vkstate.semaphores[1];
 	presentInfo.swapchainCount = 1;
-	presentInfo.pSwapchains = &vkstate.swapchain;
+	presentInfo.pSwapchains = vkstate.swapchain;
 	presentInfo.pImageIndices = &image_index;
 	vkQueuePresentKHR(*vkstate.device_queue, &presentInfo);
 }
