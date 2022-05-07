@@ -39,7 +39,10 @@ TODO:
 	6.
 		Change makefile to compile shaders with glslc if they are found.
 
-
+	7.
+		Do something about the compile-time shaders paths
+	8.
+		Use a more descriptive name than 'i' for your for loops.
 */
 
 
@@ -147,14 +150,20 @@ void vulkan_init(void) {
 				VkApplicationInfo *appinfo = calloc(1,sizeof(VkApplicationInfo));
 				appinfo->sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 				appinfo->pApplicationName = "Hi world.";
+				// 040?
 				appinfo->applicationVersion = 040;
 				appinfo->apiVersion = VK_MAKE_VERSION(1, 2, 0);
 				instance_info->pApplicationInfo = appinfo;
 			}
 			instance_info->sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-			{ // Getting and verifying the instance extensions
+			{  // Getting and verifying the instance extensions
+				
+				//TODO: Figure out what to do about these
 				//compile time variables to configure:
 				char *req_exts[] = {"VK_KHR_surface"};
+				//why would you enable all extensions?!
+				//TODO: remove "enable_all_extensions", probably remove 'rquested_extensions' entirely, and clean everything here up.
+				// also will probably need to make req_exts a char ** in order to still append it with the SDL extensions, although that shouldn't cause any problems.
 				int enable_all_extensions = 0;
 				//The rest is calcualation.
 
@@ -170,6 +179,8 @@ void vulkan_init(void) {
 				}
 
 				uint32_t enabled_extension_count;
+				// two variables named "requested extensions", one of them shortened?
+				// can probably just 
 				char **requested_extensions;
 				{ //prepare requested_extensions and set enabled_extension_count
 					if (enable_all_extensions) {
@@ -208,15 +219,15 @@ void vulkan_init(void) {
 					}
 					{ //add SDL extensions
 						unsigned int pcount;
-						char ** pnames;
 						if (SDL_Vulkan_GetInstanceExtensions(window, &pcount,NULL) == SDL_FALSE) {
 							LOG_ERROR("Error, could not get SDL Vulkan extensions\n");
 							exit(-1);
 						}
-						pnames = malloc(sizeof(char*)*pcount);
+						char **pnames = malloc(sizeof(char*)*pcount);
 						SDL_Vulkan_GetInstanceExtensions(window,&pcount,(const char **)pnames);
 						requested_extensions = realloc(requested_extensions,sizeof(char*)*(enabled_extension_count + pcount));
 						for (uint32_t i = enabled_extension_count; i < enabled_extension_count+pcount; i++) {
+							//add one for null character not counted as part of the string length
 							requested_extensions[i] = malloc(strlen(pnames[i-enabled_extension_count]) + 1);
 							memcpy(requested_extensions[i], pnames[i-enabled_extension_count], strlen(pnames[i-enabled_extension_count]) + 1);
 						}
@@ -260,6 +271,9 @@ void vulkan_init(void) {
 			}
 		}
 		{ //select suitable device
+			//TODO: When turning things into functions, a suitability function for devices?
+			//this way, as dev understanding of what is and isn't required changes, they just need to modify that, rather than
+			//deal with the code that gets the physical device alltogether. SRP
 			int found_device = 0;
 			for (uint32_t i = 0; i < dev_count; i++) {
 				VkPhysicalDeviceProperties props;
@@ -270,26 +284,29 @@ void vulkan_init(void) {
 				for (uint32_t j = 0; j < queuefamilycount; j++) {
 					vkGetPhysicalDeviceSurfaceSupportKHR(devices[i], j, vkstate.surface, &surface_supported);
 				}
-				if (surface_supported) {
-					found_device = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
-					if (found_device) {
-						vkstate.phys_dev = devices[i];
-						break;
-					}
+				if (surface_supported && VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+					found_device = 1;
+					vkstate.phys_dev = devices[i];
+					break;
 				}
 			}
 			if (!found_device) {
-				LOG_ERROR("no suitable devices found\n");
+				LOG_ERROR("No suitable devices found\n");
 				exit(-1);
 			}
 		}
 	}
 	{ //create a logical device 
 			{ // Device create info
-
 				VkDeviceQueueCreateInfo *device_queue_create_info;
 				{ //Device queue create info
 					{ //Find suitable family
+						//TODO:
+						// similarly as described and reasoned earlier in the physical device part,
+						// have your own function for gauging the suitibility of a queue family.
+						// in the case of queue families, however, they have another issue. It really depends what you're going to be using the queue for,
+						// and therefore the requirements need to be passed as an argument, or a new function would have to be made for every set of requirements
+						// for this reason, i have to reccomend holding off on this until more research about what the most practical solution would be is done.
 						uint32_t property_count;
 						VkQueueFamilyProperties *props;
 						vkGetPhysicalDeviceQueueFamilyProperties(vkstate.phys_dev, &property_count, NULL);
@@ -319,8 +336,14 @@ void vulkan_init(void) {
 				char **device_extensions;
 				uint32_t enabled_extension_count;
 				{ //get & verify device extensions
-					char *req_exts[] = {"VK_KHR_swapchain", "VK_NV_fill_rectangle"};
+					//TODO:
+					//	do something about these compile-time variables
+					//	make req_exts a char**
+					char *req_exts[] = {"VK_KHR_swapchain"};
+					//	remove enable_all_extensions
+					// 	check for a way to abstract this and the other one into one function
 					int enable_all_extensions = 0;
+
 					uint32_t property_count;
 					VkResult result = vkEnumerateDeviceExtensionProperties(vkstate.phys_dev, NULL, &property_count, NULL);
 					if (result != VK_SUCCESS) {
@@ -364,9 +387,6 @@ void vulkan_init(void) {
 				device_create_info->ppEnabledExtensionNames = (const char**) device_extensions;
 				device_create_info->enabledExtensionCount = enabled_extension_count;
 				device_create_info->pEnabledFeatures = NULL;
-
-				// device_create_info->ppEnabledLayerNames = (const char * const[]){"VK_LAYER_KHRONOS_validation"};
-				// device_create_info->enabledLayerCount = 1;
 				vkstate.device_create_info = device_create_info;
 			}
 			vkCreateDevice(vkstate.phys_dev,vkstate.device_create_info,NULL,&vkstate.log_dev);
@@ -436,7 +456,6 @@ void vulkan_init(void) {
 			}
 			VkSubpassDescription * subpasses;
 			{ //subpass description
-
 				subpasses = calloc(sizeof(VkSubpassDescription),1);
 				subpasses->pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 				subpasses->colorAttachmentCount = 1;
@@ -530,9 +549,9 @@ void vulkan_init(void) {
 		vkstate.graphics_pipeline_create_info->sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		{ //shader stage
 			vkstate.graphics_pipeline_create_info->stageCount = 2;
+			//TOD definitiely abstract these into one function
 			//vertex shader
 			{
-
 				int size;
 				uint32_t * vertex_code;
 				read_file(VERTEX_SHADER_PATH, &size , &vertex_code);
@@ -687,7 +706,7 @@ void vulkan_init(void) {
 			vkstate.fence_create_info->sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 			vkstate.fence_create_info->flags = VK_FENCE_CREATE_SIGNALED_BIT;
 		}
-		vkstate.fences = calloc(sizeof(VkFence),1);
+		vkstate.fences = malloc(sizeof(VkFence));
 		vkCreateFence(vkstate.log_dev, vkstate.fence_create_info, NULL, vkstate.fences);
 	}
 
