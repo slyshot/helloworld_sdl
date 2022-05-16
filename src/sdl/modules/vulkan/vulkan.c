@@ -15,13 +15,11 @@
 
 /*
 TODO:
+
 	1.
-		Clean up the vkstate struct by taking anything which is referenced through a create_info out of the struct.
-		Point is to minimize the size of vkstate without loosing information needed to create or recreate any part of it.
-	2.
 		Move all the major steps, right now categorized through brackets into their own functions.
 		Have them take as variables vkstate and any information regarding whatever it is they are creating (create infos, primarily)
-	3.
+	2.
 		Make "template" create info generator(s), and put them in a different file.
 		This way, you will be able to make a swapchain that fills the vkstate with gen_swapchain(&vkstruct, default_swapchain_template(vkstate) ),
 		but if I find another swapchain info I want to use instead, gen_swapchain can be called with some other swapchain_info as the second argument.
@@ -29,18 +27,18 @@ TODO:
 		It must be a generator because it has to reference things that have been dealt with before in the vkstate.
 		For instance, many functions require a logical device. Instead of passing everything, I pass a createinfo generated with vkstate available
 		to pull things like log_dev and imageviews whenever needed.
-	4.
+	3.
 		Make cleanup functions, and set up clean recreation of the different objects (That is, recreate the object and everything of which their validitiy requires
 			recreation because of the first object being recreated)
 		I'm considering doing this with a dependency graph, since sometimes things which seem like they could be dependant happen not to be,
 		but that may be an overcomplication, and I may just make a specific ordering for the gen and cleanup functions to run in. 
-	5.
+	4.
 		Set up dynamic state, and descriptors
-	6.
+	5.
 		Change makefile to compile shaders with glslc if they are found.
-	7.
+	6.
 		Do something about the compile-time shaders paths
-	8.
+	7.
 		Use a more descriptive name than 'i' for your for loops.
 */
 
@@ -79,7 +77,7 @@ typedef struct {
 
 	VkCommandBufferBeginInfo *cmd_begin_info;
 
-	VkRenderPassBeginInfo *render_pass_begin_info;
+	VkRenderPassBeginInfo *render_pass_begin_infos;
 
 
 	VkShaderModuleCreateInfo *vertex_shader_module_create_info;
@@ -103,13 +101,15 @@ typedef struct {
 
 	VkPipelineColorBlendStateCreateInfo *pipeline_color_blend_state_create_info;
 
+	// VkPipelineDynamicStateCreateInfo *pipeline_dynamic_state_create_info;
+
 	VkPipelineLayoutCreateInfo *pipeline_layout_create_info;
 
 	VkGraphicsPipelineCreateInfo *graphics_pipeline_create_info;
 
 	VkPipelineLayout *pipeline_layout;
 
-
+	//todo: make this a pointer
 	VkPipeline graphics_pipeline;
 	VkSemaphoreCreateInfo *semaphore_create_info;
 	VkSemaphore *semaphores;
@@ -152,7 +152,7 @@ void generate_instance(vk_state *vkstate) {
 			appinfo->pApplicationName = "Hi world.";
 			// 040?
 			appinfo->applicationVersion = 040;
-			appinfo->apiVersion = VK_MAKE_VERSION(1, 2, 0);
+			appinfo->apiVersion = VK_MAKE_VERSION(1, 3, 0);
 			instance_info->pApplicationInfo = appinfo;
 		}
 		instance_info->sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -360,7 +360,6 @@ void generate_logical_device(vk_state *vkstate) {
 }
 void generate_swapchain(vk_state *vkstate) {
 	{ //swap chain info
-		
 		vkstate->swapchain_info = calloc(sizeof(VkSwapchainCreateInfoKHR),1);
 		vkstate->swapchain_info->sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 		vkstate->swapchain_info->surface = vkstate->surface;
@@ -610,7 +609,7 @@ void generate_graphics_pipeline(vk_state *vkstate) {
 		vkstate->pipeline_input_assembly_state_create_info->topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 		vkstate->pipeline_input_assembly_state_create_info->primitiveRestartEnable = VK_FALSE;
 	}
-	{ //Color blend state create info
+	{ //color blend state create info
 		vkstate->pipeline_color_blend_state_create_info = calloc(sizeof(VkPipelineColorBlendStateCreateInfo),1);
 		vkstate->pipeline_color_blend_state_create_info->sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 		vkstate->pipeline_color_blend_state_create_info->attachmentCount = 1;
@@ -628,6 +627,14 @@ void generate_graphics_pipeline(vk_state *vkstate) {
 		vkstate->pipeline_color_blend_state_create_info->blendConstants[2] = 0.0f;
 		vkstate->pipeline_color_blend_state_create_info->blendConstants[3] = 0.0f;
 	}
+	// { //dynamic state create info
+	// 	vkstate->pipeline_dynamic_state_create_info = calloc(sizeof(VkPipelineDynamicStateCreateInfo),1);
+	// 	vkstate->pipeline_dynamic_state_create_info->sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+	// 	vkstate->pipeline_dynamic_state_create_info->pNext = NULL;
+	// 	vkstate->pipeline_dynamic_state_create_info->dynamicStateCount = 1;
+	// 	vkstate->pipeline_dynamic_state_create_info->pDynamicStates = &(VkDynamicState){};
+	// 	// vkstate->pipeline_dynamic_state_create_info->
+	// }
 	{ //layout create info
 		vkstate->pipeline_layout_create_info = calloc(sizeof(VkPipelineLayoutCreateInfo),1);
 		vkstate->pipeline_layout = malloc(sizeof(VkPipelineLayout));
@@ -646,6 +653,7 @@ void generate_graphics_pipeline(vk_state *vkstate) {
 	vkstate->graphics_pipeline_create_info->pRasterizationState = vkstate->pipeline_rasterization_state_create_info;
 	vkstate->graphics_pipeline_create_info->pStages = (VkPipelineShaderStageCreateInfo[2]){*vkstate->vertex_pipeline_shader_stage_create_info, *vkstate->fragment_pipeline_shader_stage_create_info};
 	vkstate->graphics_pipeline_create_info->pColorBlendState = vkstate->pipeline_color_blend_state_create_info;
+	// vkstate->graphics_pipeline_create_info->pDynamicState = vkstate->pipeline_dynamic_state_create_info;
 	vkstate->graphics_pipeline_create_info->pMultisampleState = vkstate->pipeline_multisample_state_create_info;
 	vkstate->graphics_pipeline_create_info->pViewportState = vkstate->pipeline_viewport_state_create_info;
 	vkstate->graphics_pipeline_create_info->renderPass = *vkstate->render_pass;
@@ -670,9 +678,9 @@ void generate_fences(vk_state *vkstate) {
 	}
 	vkstate->fences = malloc(sizeof(VkFence));
 	vkCreateFence(vkstate->log_dev, vkstate->fence_create_info, NULL, vkstate->fences);
-
 }
 void write_command_buffers(vk_state *vkstate) {
+		vkstate->render_pass_begin_infos = calloc(sizeof(VkRenderPassBeginInfo),vkstate->cmd_allocate_info->commandBufferCount);
 	for (uint32_t buffer_index = 0; buffer_index < vkstate->cmd_allocate_info->commandBufferCount; buffer_index++) {
 		{ //command begin info
 			vkstate->cmd_begin_info = calloc(sizeof(VkCommandBufferBeginInfo),1);
@@ -681,24 +689,45 @@ void write_command_buffers(vk_state *vkstate) {
 		vkBeginCommandBuffer(vkstate->cmd_buffers[buffer_index], vkstate->cmd_begin_info);
 		{ //render pass begin info
 
-			vkstate->render_pass_begin_info = calloc(sizeof(VkRenderPassBeginInfo),1);
-			vkstate->render_pass_begin_info->sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-			vkstate->render_pass_begin_info->renderPass = *vkstate->render_pass;
-			vkstate->render_pass_begin_info->framebuffer = vkstate->framebuffers[buffer_index];
-			vkstate->render_pass_begin_info->renderArea.extent = vkstate->swapchain_info->imageExtent;
-			vkstate->render_pass_begin_info->renderArea.offset = (VkOffset2D){0,0};
+			vkstate->render_pass_begin_infos[buffer_index].sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+			vkstate->render_pass_begin_infos[buffer_index].renderPass = *vkstate->render_pass;
+			vkstate->render_pass_begin_infos[buffer_index].framebuffer = vkstate->framebuffers[buffer_index];
+			vkstate->render_pass_begin_infos[buffer_index].renderArea.extent = vkstate->swapchain_info->imageExtent;
+			vkstate->render_pass_begin_infos[buffer_index].renderArea.offset = (VkOffset2D){0,0};
 			VkClearValue *clear_color = malloc(sizeof(VkClearValue));
 			*clear_color = (VkClearValue){.color={{0.0f,0.0f,0.0f,1.0f}}};
-			vkstate->render_pass_begin_info->clearValueCount = 1;
-			vkstate->render_pass_begin_info->pClearValues = clear_color;
+			vkstate->render_pass_begin_infos[buffer_index].clearValueCount = 1;
+			vkstate->render_pass_begin_infos[buffer_index].pClearValues = &(VkClearValue){.color={{0.0f,0.0f,0.0f,1.0f}}};
 		}
-		vkCmdBeginRenderPass(vkstate->cmd_buffers[buffer_index],vkstate->render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBeginRenderPass(vkstate->cmd_buffers[buffer_index],&vkstate->render_pass_begin_infos[buffer_index], VK_SUBPASS_CONTENTS_INLINE);
 		vkCmdBindPipeline(vkstate->cmd_buffers[buffer_index], VK_PIPELINE_BIND_POINT_GRAPHICS, vkstate->graphics_pipeline);
 		vkCmdDraw(vkstate->cmd_buffers[buffer_index], 3, 1, 0, 0);
 		vkCmdEndRenderPass(vkstate->cmd_buffers[buffer_index]);
 		vkEndCommandBuffer(vkstate->cmd_buffers[buffer_index]);
 	}
 }
+//TODO:
+//instead of manually destroying the dependencies here, give them their own cleanup functions.
+//only cleanup and free swapchain related things, and then call cleanup functions for anything directly dependant on it.
+//dependencies of dependencies, like the renderpass(Which, IIRC, is depenent on imageviews generated using swapchain images) will be handled by a direct dependency.
+//this way, no function leaves invalid handles or leaks memory, and there are no huge monolithic functions that violate the single-responsibility principle.
+void cleanup_swapchain(vk_state *vkstate) {
+	// for (int i = 0; i < vkstate->)
+	vkDestroyFramebuffer(vkstate->log_dev, *vkstate->framebuffers, NULL);
+	vkDestroyPipeline(vkstate->log_dev, vkstate->graphics_pipeline, NULL);
+	vkDestroyPipelineLayout(vkstate->log_dev, *vkstate->pipeline_layout, NULL);
+	vkDestroyRenderPass(vkstate->log_dev, *vkstate->render_pass, NULL);
+	for (uint32_t i = 0; i < vkstate->swapchain_imagecount;i++) {
+		vkDestroyImageView(vkstate->log_dev, vkstate->imageviews[i], NULL);
+	}
+	vkDestroySwapchainKHR(vkstate->log_dev, *vkstate->swapchain, NULL);
+	free(vkstate->swapchain);
+	free(vkstate->swapchain_info);
+	free(vkstate->swapchain_images);
+	free(vkstate->cmd_begin_info);
+	free(vkstate->render_pass_begin_infos);
+}
+
 void vulkan_init(void) {
 	/*
 		TODO:
@@ -706,6 +735,7 @@ void vulkan_init(void) {
 			With the logical dependencies, as well as custom-set generate_x functions (these will be 'default'), regenerate anything that needs to be regenerated,
 			free anything that needs freed, etc, so that things like swapchain regeneration and replacement can be done with just one function call.
 	*/
+	vkstate.swapchain = VK_NULL_HANDLE;
 	generate_instance(&vkstate);
 	generate_surface(&vkstate);
 	generate_physical_device(&vkstate);
@@ -722,24 +752,47 @@ void vulkan_init(void) {
 	write_command_buffers(&vkstate);
 
 }
+
+void recreate_swapchain(vk_state *vkstate) {
+	vkDeviceWaitIdle(vkstate->log_dev);
+	//when recreating the swapchain, you also need to recreate all of it's dependencies.
+	//because you can't remove a swapchain without also invalidating all of it's dependencies, cleanup_swapchain is all that needs to be called.
+	cleanup_swapchain(vkstate);
+	generate_swapchain(vkstate);
+	generate_imageviews(vkstate);
+	generate_renderpass(vkstate);
+	generate_graphics_pipeline(vkstate);
+	generate_framebuffers(vkstate);
+	write_command_buffers(vkstate);
+}
 void vulkan_update(int dt) {
 	vkWaitForFences(vkstate.log_dev, 1, &vkstate.fences[0], VK_TRUE, UINT64_MAX);
-	vkResetFences(vkstate.log_dev,1,&vkstate.fences[0]);
 	uint32_t image_index;
-	vkAcquireNextImageKHR(vkstate.log_dev, *vkstate.swapchain, UINT64_MAX, vkstate.semaphores[0], VK_NULL_HANDLE, &image_index);
-	// VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+	VkResult result = vkAcquireNextImageKHR(vkstate.log_dev, *vkstate.swapchain, 1000000000, vkstate.semaphores[0], VK_NULL_HANDLE, &image_index);
+	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+		recreate_swapchain(&vkstate);
+		return;
+	}
+	vkResetFences(vkstate.log_dev,1,&vkstate.fences[0]);
 	uint32_t flag = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	vkQueueSubmit(*vkstate.device_queue, 1, &(VkSubmitInfo) {
+	result = vkQueueSubmit(*vkstate.device_queue, 1, &(VkSubmitInfo) {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.pNext = NULL,
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &vkstate.semaphores[0],
 		.pWaitDstStageMask = &flag,
 		.commandBufferCount = 1,
-		.pCommandBuffers = &vkstate.cmd_buffers[image_index],
+		.pCommandBuffers = &(vkstate.cmd_buffers[image_index]),
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &vkstate.semaphores[1],
 	}, vkstate.fences[0]);
+
+	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+		recreate_swapchain(&vkstate);
+		return;
+	}
+
+
 	VkPresentInfoKHR presentInfo = {0};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	presentInfo.waitSemaphoreCount = 1;
