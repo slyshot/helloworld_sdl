@@ -1,4 +1,4 @@
-// #include <SDL2/SDL_events.h>
+#include <SDL2/SDL_events.h>
 #include <SDL2/SDL.h>
 void helper_eventhandle(SDL_Event * e) {
 	if (e->type == SDL_WINDOWEVENT) {

@@ -16,7 +16,7 @@ CFLAGS += `sdl2-config --cflags` -I/usr/local/include
 LDFLAGS += `sdl2-config --libs` -L/usr/local/lib
 LDFLAGS += -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi
 CFLAGS = -Wall -Wextra
-CFLAGES += -g
+CFLAGS += -g
 CFLAGS +=  -I./src/headers
 
 COMPILE = $(CC) $(CFLAGS)

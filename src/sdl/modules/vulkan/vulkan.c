@@ -2,12 +2,15 @@
 
 #define VK_ENABLE_BEHTA_EXTENSIONS
 #include <vulkan/vulkan.h>
+#include "sdl/modules/vulkan/vkstate.h"
 // #include <SDL2/SDL.h>
 #include <SDL2/SDL_vulkan.h>
 #include "sdl/sdl.h"
 #include "log/log.h"
 #include <stdlib.h>
 #include <string.h>
+// #include <cglm/vec2.h>
+#include <cglm/cglm.h>
 // #define STORE(NON_STRUCT_PTR,TYPE,STRUCT) do { TYPE * ptr = malloc(sizeof(TYPE)); memcpy(ptr,NON_STRUCT_PTR,sizeof(TYPE)); STRUCT.NON_STRUCT_PTR = ptr; } while 0
 #define CLAMP(x, lo, hi)    ((x) < (lo) ? (lo) : (x) > (hi) ? (hi) : (x))
 //this is entirely a struct to store all objects created and information that was required to create them.
@@ -40,82 +43,40 @@ TODO:
 		Do something about the compile-time shaders paths
 	7.
 		Use a more descriptive name than 'i' for your for loops.
+	8.
+		Since I want this to be a tool I can use for other things, and other people can use if they dare,
+		I want the buffer objects to be something the user requests from a callback. Probably, information regarding that and other things may be populated before vulkan_init is even called.
+		Regardless, I want the buffer objects, as they are, to not be hardcoded but to be pointers.
+
 */
 
+/*
+In order to properly store memory buffers in vulkan, some things need to be worked out:
+first of all, there must be a good interface between the way things are stored in vulkan vs in the game.
+There are a variety of reasons to do this:
+1. Memory arrangements which are good for efficient, easy-to-understand, modular, extensible features in programming design
+aren't going to be efficient in GPU memory
+2. there ought to be seperation from graphics AI and logic; the ability to 'drag-and-drop' something like openGL 
+in place of vulkan ought to be promoted by the design
 
-typedef struct {
-	VkInstanceCreateInfo *instance_info;
-	VkInstance instance;
+Things which are reccomended in graphics programming aren't reccomended in regular programming. For instance, 
+it seems best to keep memory allocations minimal and big. Rather than allocate 10 buffers, allocate one big one, with 10
+different kinds of data in it.
+The problems that arise when dealing with a buffer that stores data with different purposes are generally solved by things like
+the 'stride' perameter, and other ease-of-life features.
 
-	VkSurfaceKHR surface;
-
-	VkPhysicalDevice phys_dev;
-	VkDeviceCreateInfo *device_create_info;
-	VkDevice log_dev;
-	uint32_t queue_family_index;
-	VkQueue *device_queue;
-
-	VkCommandPoolCreateInfo *command_pool_create_info;
-	VkCommandPool command_pool;
-
-	VkRenderPassCreateInfo *render_pass_info;
-	VkRenderPass *render_pass;
-
-	VkSwapchainCreateInfoKHR *swapchain_info;
-	VkSwapchainKHR *swapchain;
-	uint32_t swapchain_imagecount;
-	VkImage *swapchain_images;
-
-	VkImageViewCreateInfo *imageview_infos;
-	VkImageView *imageviews;
-
-	VkFramebufferCreateInfo *framebuffer_infos;
-	VkFramebuffer *framebuffers;
-
-	VkCommandBufferAllocateInfo *cmd_allocate_info;
-	VkCommandBuffer *cmd_buffers;
-
-	VkCommandBufferBeginInfo *cmd_begin_info;
-
-	VkRenderPassBeginInfo *render_pass_begin_infos;
+As mentioned later in comments, each generation function should have a secondary perameter of an incomplete struct and bitmask of inputted values.
+That way, you could have a complete deviation (Basically just setting the info and having whatever setup needs to go around that be default) or setting just one or so options in the infe
 
 
-	VkShaderModuleCreateInfo *vertex_shader_module_create_info;
-	VkShaderModule vertex_shader_module;
 
-	VkShaderModuleCreateInfo *fragment_shader_module_create_info;
-	VkShaderModule fragment_shader_module;
 
-	VkPipelineShaderStageCreateInfo *vertex_pipeline_shader_stage_create_info;
-	VkPipelineShaderStageCreateInfo *fragment_pipeline_shader_stage_create_info;
 
-	VkPipelineVertexInputStateCreateInfo *pipeline_vertex_input_state_create_info;
 
-	VkPipelineViewportStateCreateInfo *pipeline_viewport_state_create_info;
 
-	VkPipelineRasterizationStateCreateInfo *pipeline_rasterization_state_create_info;
 
-	VkPipelineMultisampleStateCreateInfo *pipeline_multisample_state_create_info;
-	
-	VkPipelineInputAssemblyStateCreateInfo *pipeline_input_assembly_state_create_info;
+*/
 
-	VkPipelineColorBlendStateCreateInfo *pipeline_color_blend_state_create_info;
-
-	// VkPipelineDynamicStateCreateInfo *pipeline_dynamic_state_create_info;
-
-	VkPipelineLayoutCreateInfo *pipeline_layout_create_info;
-
-	VkGraphicsPipelineCreateInfo *graphics_pipeline_create_info;
-
-	VkPipelineLayout *pipeline_layout;
-
-	//todo: make this a pointer
-	VkPipeline graphics_pipeline;
-	VkSemaphoreCreateInfo *semaphore_create_info;
-	VkSemaphore *semaphores;
-	VkFenceCreateInfo *fence_create_info;
-	VkFence *fences;
-} vk_state;
 #define VERTEX_SHADER_PATH "./vert.spv"
 #define FRAGMENT_SHADER_PATH "./frag.spv"
 vk_state vkstate;
@@ -159,10 +120,11 @@ void generate_instance(vk_state *vkstate) {
 		{  // Getting and verifying the instance extensions
 			
 			char **req_exts = malloc(sizeof(char*)*1);
-			req_exts[0] = "VK_KHR_surface";
-			uint32_t enabled_extension_count = 1;
+			// req_exts[0] = "VK_EXT_debug_report";
+			uint32_t enabled_extension_count = 0;
 
 			uint32_t property_count;
+
 			VkResult result = vkEnumerateInstanceExtensionProperties(NULL, &property_count, NULL);
 			if (result != VK_SUCCESS) {
 				LOG_ERROR("Error, can't get number of extensions. Error num: %d\n",result);
@@ -196,10 +158,11 @@ void generate_instance(vk_state *vkstate) {
 					char **pnames = malloc(sizeof(char*)*pcount);
 					SDL_Vulkan_GetInstanceExtensions(window,&pcount,(const char **)pnames);
 					req_exts = realloc(req_exts,sizeof(char*)*(enabled_extension_count + pcount));
-					for (uint32_t i = enabled_extension_count; i < enabled_extension_count+pcount; i++) {
+					for (uint32_t i = 0; i < pcount; i++) {
 						//add one for null character not counted as part of the string length
-						req_exts[i] = malloc(strlen(pnames[i-enabled_extension_count]) + 1);
-						memcpy(req_exts[i], pnames[i-enabled_extension_count], strlen(pnames[i-enabled_extension_count]) + 1);
+						req_exts[i+enabled_extension_count] = malloc(strlen(pnames[i]) + 1);
+						memcpy(req_exts[i+enabled_extension_count], pnames[i], strlen(pnames[i]) + 1);
+						// printf("%s\n",req_exts[i+enabled_extension_count]);
 					}
 					enabled_extension_count += pcount;
 					free(pnames);
@@ -210,15 +173,33 @@ void generate_instance(vk_state *vkstate) {
 
 
 		}
-		{//validation layers
-			instance_info->ppEnabledLayerNames = (const char * const[]){"VK_LAYER_KHRONOS_validation"};
+
+		{ //iterate through every validation layer trying to figure out why the FUCK the layer isn't working
+			uint32_t layerCount;
+			vkEnumerateInstanceLayerProperties(&layerCount,NULL);
+			VkLayerProperties *availableLayers = malloc(sizeof(VkLayerProperties)*layerCount);
+			vkEnumerateInstanceLayerProperties(&layerCount, availableLayers);
+			// for (int layer_index = 0; layer_index < layerCount; layer_index++) {
+			// 	// for (int i = 0; i < availableLayers[layer_index]; i++) {
+			// 	printf("available: %s\n",availableLayers[layer_index].layerName);
+			// 	// }
+			// }
+		}
+		{
+			//This doesn't work with my current system.
+			//I remember a day when it did, and every online source I can find, and every discord, has pretty much confirmed that it /should/ work.
+			//This gives me reason to believe I am simply cursed, and there is no solution to my problem. On my one particular computer, I'll use vkconfig to set up
+			//validation layers until I find a witch to lift my curse. But. This should be fine. :))))
+			vkstate->layername = "VK_LAYER_KHRONOS_validation";
+			instance_info->ppEnabledLayerNames = &vkstate->layername;
 			instance_info->enabledLayerCount = 1;
 		}
 		vkstate->instance_info = instance_info;
+		// printf("%s\n",vkstate->instance_info->ppEnabledLayerNames[0]);
 	}
 	VkResult result = vkCreateInstance(vkstate->instance_info, NULL, &vkstate->instance);
 	if (result != VK_SUCCESS) {
-		LOG_ERROR("Could not create instance. Error num %d", result);
+		LOG_ERROR("Could not create instance. Error num %d\n", result);
 		exit(-1);
 	}
 }
@@ -230,6 +211,7 @@ void generate_surface(vk_state *vkstate) {
 }
 void generate_physical_device(vk_state *vkstate) {
 	uint32_t dev_count;
+	// vkEnumeratePhysicalDevices(NULL, NULL, NULL);
 	VkPhysicalDevice * devices;
 	{ //get device list & count
 		VkResult result = vkEnumeratePhysicalDevices(vkstate->instance, &dev_count, NULL);
@@ -247,7 +229,7 @@ void generate_physical_device(vk_state *vkstate) {
 	{ //select suitable device
 		//TODO: When turning things into functions, a suitability function for devices?
 		//this way, as dev understanding of what is and isn't required changes, they just need to modify that, rather than
-		//deal with the code that gets the physical device alltogether. SRP
+		//deal with the code that gets the physical device alltogether.
 		int found_device = 0;
 		for (uint32_t i = 0; i < dev_count; i++) {
 			VkPhysicalDeviceProperties props;
@@ -257,11 +239,11 @@ void generate_physical_device(vk_state *vkstate) {
 			VkBool32 surface_supported = 0;
 			for (uint32_t j = 0; j < queuefamilycount; j++) {
 				vkGetPhysicalDeviceSurfaceSupportKHR(devices[i], j, vkstate->surface, &surface_supported);
-			}
-			if (surface_supported && props.deviceType & VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-				found_device = 1;
-				vkstate->phys_dev = devices[i];
-				break;
+				if (surface_supported && props.deviceType & VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+					found_device = 1;
+					vkstate->phys_dev = devices[i];
+					break;
+				}
 			}
 		}
 		if (!found_device) {
@@ -281,6 +263,10 @@ void generate_logical_device(vk_state *vkstate) {
 				// in the case of queue families, however, they have another issue. It really depends what you're going to be using the queue for,
 				// and therefore the requirements need to be passed as an argument, or a new function would have to be made for every set of requirements
 				// for this reason, i have to reccomend holding off on this until more research about what the most practical solution would be is done.
+
+				//my personal ignorance makes this a similar task to asking children which gun is best for hunting. The easiest answer is: Don't ask them.
+				//for this reason, I will hold this task off as long as possible, in hopes that my ignorance will be solved with prayer or some kind of collective-uncoscious osmosis
+
 				uint32_t property_count;
 				VkQueueFamilyProperties *props;
 				vkGetPhysicalDeviceQueueFamilyProperties(vkstate->phys_dev, &property_count, NULL);
@@ -363,7 +349,7 @@ void generate_swapchain(vk_state *vkstate) {
 		vkstate->swapchain_info = calloc(sizeof(VkSwapchainCreateInfoKHR),1);
 		vkstate->swapchain_info->sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 		vkstate->swapchain_info->surface = vkstate->surface;
-		vkstate->swapchain_info->minImageCount = 2;
+		vkstate->swapchain_info->minImageCount = 3;
 		VkSurfaceCapabilitiesKHR capabilities;
 		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkstate->phys_dev, vkstate->surface, &capabilities);
 		int width,height;
@@ -376,7 +362,7 @@ void generate_swapchain(vk_state *vkstate) {
 		vkstate->swapchain_info->imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 		vkstate->swapchain_info->preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 		vkstate->swapchain_info->compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-		vkstate->swapchain_info->presentMode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+		vkstate->swapchain_info->presentMode = VK_PRESENT_MODE_FIFO_KHR;
 		vkstate->swapchain_info->clipped = VK_TRUE;
 		vkstate->swapchain_info->oldSwapchain = VK_NULL_HANDLE;
 		VkSurfaceFormatKHR *formats;
@@ -449,8 +435,8 @@ void generate_renderpass(vk_state *vkstate) {
 	vkCreateRenderPass(vkstate->log_dev,vkstate->render_pass_info,NULL,vkstate->render_pass);
 }
 void generate_imageviews(vk_state *vkstate) {
-	vkstate->imageview_infos = calloc(sizeof(VkImageViewCreateInfo)*2,1);
-	vkstate->imageviews = malloc(sizeof(VkImageView)*2);
+	vkstate->imageview_infos = calloc(sizeof(VkImageViewCreateInfo)*vkstate->swapchain_imagecount,1);
+	vkstate->imageviews = malloc(sizeof(VkImageView)*vkstate->swapchain_imagecount);
 	for (uint32_t i = 0; i < vkstate->swapchain_imagecount; i++) {
 		vkstate->imageview_infos[i].sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		vkstate->imageview_infos[i].image = vkstate->swapchain_images[i];
@@ -472,8 +458,8 @@ void generate_imageviews(vk_state *vkstate) {
 	}
 }
 void generate_framebuffers(vk_state *vkstate) {
-	vkstate->framebuffer_infos = calloc(sizeof(VkFramebufferCreateInfo)*2,1);
-	vkstate->framebuffers = malloc(sizeof(VkFramebuffer)*2);
+	vkstate->framebuffer_infos = calloc(sizeof(VkFramebufferCreateInfo)*vkstate->swapchain_imagecount,1);
+	vkstate->framebuffers = malloc(sizeof(VkFramebuffer)*vkstate->swapchain_imagecount);
 	for (uint32_t i = 0; i < vkstate->swapchain_imagecount; i++) {
 		vkstate->framebuffer_infos[i].sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 		vkstate->framebuffer_infos[i].renderPass = *vkstate->render_pass;
@@ -552,8 +538,33 @@ void generate_graphics_pipeline(vk_state *vkstate) {
 	{ //vertex input state create info
 		vkstate->pipeline_vertex_input_state_create_info = calloc(sizeof(VkPipelineVertexInputStateCreateInfo),1);
 		vkstate->pipeline_vertex_input_state_create_info->sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vkstate->pipeline_vertex_input_state_create_info->vertexBindingDescriptionCount = 0;
-		vkstate->pipeline_vertex_input_state_create_info->vertexAttributeDescriptionCount = 0;
+
+		//highly temproray attribute descriptions and bindings
+		VkVertexInputBindingDescription *binding_descs = malloc(sizeof(VkVertexInputBindingDescription)*2);
+		binding_descs[0].binding = 0;
+		binding_descs[0].stride = sizeof(vec2);
+		binding_descs[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		binding_descs[1].binding = 1;
+		binding_descs[1].stride = sizeof(vec3);
+		binding_descs[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		VkVertexInputAttributeDescription *attribute_descs= malloc(sizeof(VkVertexInputAttributeDescription)*2);	
+		attribute_descs[0].binding = 0;
+		attribute_descs[0].location = 0;
+		attribute_descs[0].format = VK_FORMAT_R32G32_SFLOAT;
+		attribute_descs[0].offset = 0;
+
+		attribute_descs[1].binding = 1;
+		attribute_descs[1].location = 1;
+		attribute_descs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attribute_descs[1].offset = 0;
+
+
+		vkstate->pipeline_vertex_input_state_create_info->vertexBindingDescriptionCount = 2;
+		vkstate->pipeline_vertex_input_state_create_info->vertexAttributeDescriptionCount = 2;
+		vkstate->pipeline_vertex_input_state_create_info->pVertexBindingDescriptions = binding_descs;
+		vkstate->pipeline_vertex_input_state_create_info->pVertexAttributeDescriptions = attribute_descs;
 	}
 	{ //viewport state create info
 		vkstate->pipeline_viewport_state_create_info = calloc(sizeof(VkPipelineViewportStateCreateInfo),1);
@@ -648,22 +659,31 @@ void generate_graphics_pipeline(vk_state *vkstate) {
 		vkstate->pipeline_layout_create_info->pPushConstantRanges = NULL;
 		vkCreatePipelineLayout(vkstate->log_dev, vkstate->pipeline_layout_create_info, NULL, vkstate->pipeline_layout);
 	}
-	vkstate->graphics_pipeline_create_info->pInputAssemblyState = vkstate->pipeline_input_assembly_state_create_info;
-	vkstate->graphics_pipeline_create_info->pVertexInputState = vkstate->pipeline_vertex_input_state_create_info;
-	vkstate->graphics_pipeline_create_info->pRasterizationState = vkstate->pipeline_rasterization_state_create_info;
-	vkstate->graphics_pipeline_create_info->pStages = (VkPipelineShaderStageCreateInfo[2]){*vkstate->vertex_pipeline_shader_stage_create_info, *vkstate->fragment_pipeline_shader_stage_create_info};
-	vkstate->graphics_pipeline_create_info->pColorBlendState = vkstate->pipeline_color_blend_state_create_info;
+	*(vkstate->graphics_pipeline_create_info) = (VkGraphicsPipelineCreateInfo) {
+		.pInputAssemblyState = vkstate->pipeline_input_assembly_state_create_info,
+		.pVertexInputState = vkstate->pipeline_vertex_input_state_create_info,
+		.pRasterizationState = vkstate->pipeline_rasterization_state_create_info,
+		.pStages = (VkPipelineShaderStageCreateInfo[2]){*vkstate->vertex_pipeline_shader_stage_create_info, *vkstate->fragment_pipeline_shader_stage_create_info},
+		.pColorBlendState = vkstate->pipeline_color_blend_state_create_info,
+		.pMultisampleState = vkstate->pipeline_multisample_state_create_info,
+		.pViewportState = vkstate->pipeline_viewport_state_create_info,
+		.renderPass = *vkstate->render_pass,
+		.layout = *vkstate->pipeline_layout,
+		.pDynamicState = NULL,
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.basePipelineHandle = NULL,
+		.basePipelineIndex = 0,
+		.subpass = 0,
+		.flags = 0,
+		.stageCount = 2,
+	};
 	// vkstate->graphics_pipeline_create_info->pDynamicState = vkstate->pipeline_dynamic_state_create_info;
-	vkstate->graphics_pipeline_create_info->pMultisampleState = vkstate->pipeline_multisample_state_create_info;
-	vkstate->graphics_pipeline_create_info->pViewportState = vkstate->pipeline_viewport_state_create_info;
-	vkstate->graphics_pipeline_create_info->renderPass = *vkstate->render_pass;
-	vkstate->graphics_pipeline_create_info->layout = *vkstate->pipeline_layout;
 
 	vkCreateGraphicsPipelines(vkstate->log_dev, VK_NULL_HANDLE, 1, vkstate->graphics_pipeline_create_info, NULL, &vkstate->graphics_pipeline);
 }
 void generate_semaphores(vk_state *vkstate) {
 	{ //semaphore create info
-		vkstate->semaphore_create_info = calloc(sizeof(VkSemaphoreCreateInfo),1);
+		vkstate->semaphore_create_info = calloc(sizeof(VkSemaphoreCreateInfo),2);
 		vkstate->semaphore_create_info->sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 	}
 	vkstate->semaphores = malloc(sizeof(VkSemaphore)*2);
@@ -679,33 +699,7 @@ void generate_fences(vk_state *vkstate) {
 	vkstate->fences = malloc(sizeof(VkFence));
 	vkCreateFence(vkstate->log_dev, vkstate->fence_create_info, NULL, vkstate->fences);
 }
-void write_command_buffers(vk_state *vkstate) {
-		vkstate->render_pass_begin_infos = calloc(sizeof(VkRenderPassBeginInfo),vkstate->cmd_allocate_info->commandBufferCount);
-	for (uint32_t buffer_index = 0; buffer_index < vkstate->cmd_allocate_info->commandBufferCount; buffer_index++) {
-		{ //command begin info
-			vkstate->cmd_begin_info = calloc(sizeof(VkCommandBufferBeginInfo),1);
-			vkstate->cmd_begin_info->sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		}
-		vkBeginCommandBuffer(vkstate->cmd_buffers[buffer_index], vkstate->cmd_begin_info);
-		{ //render pass begin info
 
-			vkstate->render_pass_begin_infos[buffer_index].sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-			vkstate->render_pass_begin_infos[buffer_index].renderPass = *vkstate->render_pass;
-			vkstate->render_pass_begin_infos[buffer_index].framebuffer = vkstate->framebuffers[buffer_index];
-			vkstate->render_pass_begin_infos[buffer_index].renderArea.extent = vkstate->swapchain_info->imageExtent;
-			vkstate->render_pass_begin_infos[buffer_index].renderArea.offset = (VkOffset2D){0,0};
-			VkClearValue *clear_color = malloc(sizeof(VkClearValue));
-			*clear_color = (VkClearValue){.color={{0.0f,0.0f,0.0f,1.0f}}};
-			vkstate->render_pass_begin_infos[buffer_index].clearValueCount = 1;
-			vkstate->render_pass_begin_infos[buffer_index].pClearValues = &(VkClearValue){.color={{0.0f,0.0f,0.0f,1.0f}}};
-		}
-		vkCmdBeginRenderPass(vkstate->cmd_buffers[buffer_index],&vkstate->render_pass_begin_infos[buffer_index], VK_SUBPASS_CONTENTS_INLINE);
-		vkCmdBindPipeline(vkstate->cmd_buffers[buffer_index], VK_PIPELINE_BIND_POINT_GRAPHICS, vkstate->graphics_pipeline);
-		vkCmdDraw(vkstate->cmd_buffers[buffer_index], 3, 1, 0, 0);
-		vkCmdEndRenderPass(vkstate->cmd_buffers[buffer_index]);
-		vkEndCommandBuffer(vkstate->cmd_buffers[buffer_index]);
-	}
-}
 //TODO:
 //instead of manually destroying the dependencies here, give them their own cleanup functions.
 //only cleanup and free swapchain related things, and then call cleanup functions for anything directly dependant on it.
@@ -713,6 +707,7 @@ void write_command_buffers(vk_state *vkstate) {
 //this way, no function leaves invalid handles or leaks memory, and there are no huge monolithic functions that violate the single-responsibility principle.
 void cleanup_swapchain(vk_state *vkstate) {
 	// for (int i = 0; i < vkstate->)
+	// cleanup_vertex_buffers(vkstate);
 	vkDestroyFramebuffer(vkstate->log_dev, *vkstate->framebuffers, NULL);
 	vkDestroyPipeline(vkstate->log_dev, vkstate->graphics_pipeline, NULL);
 	vkDestroyPipelineLayout(vkstate->log_dev, *vkstate->pipeline_layout, NULL);
@@ -728,7 +723,7 @@ void cleanup_swapchain(vk_state *vkstate) {
 	free(vkstate->render_pass_begin_infos);
 }
 
-void vulkan_init(void) {
+void vulkan_before_buffers_init(void) {
 	/*
 		TODO:
 			make function that has their logical dependencies understood.
@@ -750,9 +745,11 @@ void vulkan_init(void) {
 	generate_semaphores(&vkstate);
 	generate_fences(&vkstate);
 	write_command_buffers(&vkstate);
-
 }
-
+// void vulkan_after_buffers_init(void) {
+// 	create_vertex_buffers(&vkstate);
+// 	write_command_buffers(&vkstate);
+// }
 void recreate_swapchain(vk_state *vkstate) {
 	vkDeviceWaitIdle(vkstate->log_dev);
 	//when recreating the swapchain, you also need to recreate all of it's dependencies.
@@ -763,12 +760,12 @@ void recreate_swapchain(vk_state *vkstate) {
 	generate_renderpass(vkstate);
 	generate_graphics_pipeline(vkstate);
 	generate_framebuffers(vkstate);
-	write_command_buffers(vkstate);
+	// write_command_buffers(vkstate);
 }
-void vulkan_update(int dt) {
+void vulkan_update(int dt) { 
 	vkWaitForFences(vkstate.log_dev, 1, &vkstate.fences[0], VK_TRUE, UINT64_MAX);
 	uint32_t image_index;
-	VkResult result = vkAcquireNextImageKHR(vkstate.log_dev, *vkstate.swapchain, 1000000000, vkstate.semaphores[0], VK_NULL_HANDLE, &image_index);
+	VkResult result = vkAcquireNextImageKHR(vkstate.log_dev, *vkstate.swapchain, 100000000, vkstate.semaphores[0], VK_NULL_HANDLE, &image_index);
 	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
 		recreate_swapchain(&vkstate);
 		return;
@@ -786,19 +783,24 @@ void vulkan_update(int dt) {
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &vkstate.semaphores[1],
 	}, vkstate.fences[0]);
-
+	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+		recreate_swapchain(&vkstate);
+		return;
+	}
+	VkPresentInfoKHR presentInfo = {0};
+	presentInfo = (VkPresentInfoKHR) {
+		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = &vkstate.semaphores[1],
+		.swapchainCount = 1,
+		.pSwapchains = vkstate.swapchain,
+		.pImageIndices = &image_index,
+	};
+	result = vkQueuePresentKHR(*vkstate.device_queue, &presentInfo);
 	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
 		recreate_swapchain(&vkstate);
 		return;
 	}
 
-
-	VkPresentInfoKHR presentInfo = {0};
-	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-	presentInfo.waitSemaphoreCount = 1;
-	presentInfo.pWaitSemaphores = &vkstate.semaphores[1];
-	presentInfo.swapchainCount = 1;
-	presentInfo.pSwapchains = vkstate.swapchain;
-	presentInfo.pImageIndices = &image_index;
-	vkQueuePresentKHR(*vkstate.device_queue, &presentInfo);
+	// exit(-1);
 }

@@ -1,6 +1,6 @@
 #include "SDL2/SDL.h"
 #include "sdl/events.h"
-
+#include "log/log.h"
 
 SDL_Window *window;
 
@@ -10,6 +10,9 @@ void sdl_init(void) {
 	//temporary resizability.
 	//in future, i want compile flags from SDL2/SDL.h, or another header.
 	window = SDL_CreateWindow("Hello, world!", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 700, 600, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+	if (window == NULL) {
+		LOG_ERROR("Could not create SDL window.\n%s\n",SDL_GetError());
+	}
 	for (int i = 0; event_modules_async[i]; SDL_AddEventWatch((SDL_EventFilter)event_modules_async[i++], NULL) );
 }
 
